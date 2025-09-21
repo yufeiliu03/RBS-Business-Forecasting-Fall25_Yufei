@@ -1,0 +1,108 @@
+---
+title: "HW2_Typical_Employee_Survey_Data"
+author: "Yufei Liu"
+date: "2025-09-21"
+output: html_document
+---
+
+```{r}
+library(readr)
+df <- readr::read_csv("Typical_Employee_Survey_Data.csv", show_col_types = FALSE)
+```
+
+```{r}
+names(df)
+str(df)
+summary(df)
+```
+
+```{r}
+# 2. Convert the columns that need to be converted to Factors
+df$Gender <- factor(df$Gender, levels=c(1,2), labels=c("Male","Female"))
+df$Job_Satisfaction <- factor(df$Job_Satisfaction,
+                              levels=1:4,
+                              labels=c("Very Satisfied","Moderately Satisfied",
+                                       "A Little Dissatisfied","Very Dissatisfied"))
+df$important_job_characteristics <- factor(df$important_job_characteristics,
+                                           levels=1:5,
+                                           labels=c("High Income","Job Security",
+                                                    "Flexible Hours","Advancement",
+                                                    "Enjoy Work"))
+df$promotion_in_five_years <- factor(df$promotion_in_five_years,
+                                     levels=1:5,
+                                     labels=c("Very Likely","Likely","Not Sure",
+                                              "Unlikely","Very Unlikely"))
+df$decisions_affect_work <- factor(df$decisions_affect_work,
+                                   levels=1:4,
+                                   labels=c("Always","Much of the Time",
+                                            "Sometimes","Never"))
+df$budgetary_decisions_participation <- factor(df$budgetary_decisions_participation,
+                                               levels=c(1,2), labels=c("Yes","No"))
+df$pride_of_organazation <- factor(df$pride_of_organazation,
+                                   levels=1:4,
+                                   labels=c("Very Proud","Somewhat Proud",
+                                            "Indifferent","Not Proud"))
+df$desire_to_stay <- factor(df$desire_to_stay,
+                            levels=1:5,
+                            labels=c("Very Likely","Likely","Not Sure",
+                                     "Unlikely","Very Unlikely"))
+df$relations <- factor(df$relations,
+                       levels=1:5,
+                       labels=c("Very Good","Good","So So","Bad","Very Bad"))
+```
+
+```{r}
+# 1. Print out the 5-point summary and boxplot (numerical columns) for each column
+numeric_cols <- c("Age", "years_of_service")
+
+for (nm in numeric_cols) {
+  cat("\n====", nm, "====\n")
+  print(summary(df[[nm]]))         # includes Min, 1st Qu., Median, Mean, 3rd Qu., Max
+  boxplot(df[[nm]], main = paste("Boxplot:", nm), ylab = nm)
+}
+```
+
+```{r}
+# 3. Plot the right visual for each column
+all_cols <- setdiff(names(df), c("Age","years_of_service"))
+
+for (nm in all_cols) {
+  x <- df[[nm]]
+  if (is.numeric(x)) {
+    hist(x, main = paste("Histogram:", nm), xlab = nm, cex.main = 0.9, cex.lab = 0.9, cex.axis = 0.8)
+    boxplot(x, main = paste("Boxplot:", nm), ylab = nm, cex.main = 0.9, cex.lab = 0.9, cex.axis = 0.8)
+  } else if (is.factor(x)) {
+    barplot(table(x),
+            main = paste("Bar Plot:", nm),
+            xlab = nm, ylab = "Count",
+            las = 2, cex.names = 0.75,  # factor label size
+            cex.axis  = 0.8)  # rotate x labels for readability
+  }
+}
+```
+
+```{r}
+# 4. Plot scatter plots to show few relationships
+# 1) Years of Service vs Age
+plot(df$Age, df$years_of_service,
+     xlab = "Age", ylab = "Years of Service",
+     main = "Scatter: Age vs Years of Service")
+abline(lm(years_of_service ~ Age, data = df), col = "red")
+
+# 2) Age vs Job Satisfaction (higher number = less satisfied)
+plot(df$Age, as.integer(df$Job_Satisfaction),
+     xlab = "Age", ylab = "Job Satisfaction (1=Very Satisfied … 4=Very Dissatisfied)",
+     main = "Scatter: Age vs Job Satisfaction")
+abline(lm(as.integer(Job_Satisfaction) ~ Age, data = df), col = "red")
+
+# 3) Years of Service vs Desire to Stay (higher number = less likely to stay)
+plot(df$years_of_service, as.integer(df$desire_to_stay),
+     xlab = "Years of Service", ylab = "Desire to Stay (1=Very Likely … 5=Very Unlikely)",
+     main = "Scatter: Years of Service vs Desire to Stay")
+abline(lm(as.integer(desire_to_stay) ~ years_of_service, data = df), col = "red")
+
+```
+
+
+
+
