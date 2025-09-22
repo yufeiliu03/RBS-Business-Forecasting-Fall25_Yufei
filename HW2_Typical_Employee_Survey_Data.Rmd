@@ -19,15 +19,8 @@ summary(df)
 ```{r}
 # 2. Convert the columns that need to be converted to Factors
 df$Gender <- factor(df$Gender, levels=c(1,2), labels=c("Male","Female"))
-df$Job_Satisfaction <- factor(df$Job_Satisfaction,
-                              levels=1:4,
-                              labels=c("Very Satisfied","Moderately Satisfied",
-                                       "A Little Dissatisfied","Very Dissatisfied"))
-df$important_job_characteristics <- factor(df$important_job_characteristics,
-                                           levels=1:5,
-                                           labels=c("High Income","Job Security",
-                                                    "Flexible Hours","Advancement",
-                                                    "Enjoy Work"))
+df$Job_Satisfaction <- factor(df$Job_Satisfaction, levels=1:4, labels=c("Very Satisfied","Moderately Satisfied", "A Little Dissatisfied","Very Dissatisfied"))
+df$important_job_characteristics <- factor(df$important_job_characteristics, levels=1:5, labels=c("High Income","Job Security", "Flexible Hours","Advancement", "Enjoy Work"))
 df$promotion_in_five_years <- factor(df$promotion_in_five_years,
                                      levels=1:5,
                                      labels=c("Very Likely","Likely","Not Sure",
@@ -57,7 +50,7 @@ numeric_cols <- c("Age", "years_of_service")
 
 for (nm in numeric_cols) {
   cat("\n====", nm, "====\n")
-  print(summary(df[[nm]]))         # includes Min, 1st Qu., Median, Mean, 3rd Qu., Max
+  print(summary(df[[nm]])) # includes Min, 1st Qu., Median, Mean, 3rd Qu., Max
   boxplot(df[[nm]], main = paste("Boxplot:", nm), ylab = nm)
 }
 ```
@@ -102,6 +95,7 @@ plot(df$years_of_service, as.integer(df$desire_to_stay),
 abline(lm(as.integer(desire_to_stay) ~ years_of_service, data = df), col = "red")
 
 ```
+
 
 
 
