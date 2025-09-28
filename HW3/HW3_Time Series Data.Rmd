@@ -1,0 +1,119 @@
+# Data Dictionaries
+
+## Data Dictionary — All Sectors (FL893070005.Q)
+
+**Dataset name:** Federal Reserve Z.1 — L.230 (Q) Trade Credit — All sectors; trade receivables; asset (FL893070005.Q)
+**File:** `l230_allsectors_trade_receivables_2000on.csv`
+**Update frequency:** Quarterly (not seasonally adjusted; end of period)
+**Time coverage:** 2000 Q1 – 2025 Q2
+**Unit of observation:** One row per quarter (United States)
+**Units:** Millions of U.S. dollars (amounts outstanding, end of period)
+
+### Variables
+
+| Name  | Type   | Allowed values / format | Description | Source |
+|------|--------|--------------------------|-------------|--------|
+| date | string | `YYYY Qn` (e.g., `2025 Q2`) | Quarter label (end of period) | Federal Reserve, Z.1 L.230 |
+| value| numeric| ≥ 0 (millions USD)       | Stock (level) of trade receivables for all sectors | Federal Reserve, Z.1 L.230 (series FL893070005.Q) |
+
+### Transformations / Processing
+
+1. **Frequency/units**: Data are quarterly levels. Values are kept in millions of dollars exactly as provided by the Z.1 Data Download Program (DDP) where `Unit Multiplier = 1,000,000` (Currency).
+2. **Missing values**: None observed for 2000Q1–2025Q2.
+3. **Outliers/edits**: None applied.
+4. **Seasonal adjustment**: None (NSA).
+5. **Model transforms** (if used later): note any log / Box-Cox transforms in the modeling write-up.
+6. **Optional presentation**: to match L.230 HTML tables (which display billions), divide `value` by 1,000 when charting.
+
+### Provenance / Access
+
+1. **Source**: Board of Governors of the Federal Reserve System, Z.1 Financial Accounts, Table L.230 Trade Credit.
+2. **Series ID**: FL893070005.Q (All sectors; trade receivables; asset — level).
+3. **Vintage used**: Z.1 release 2025-09-11 (quarterly).
+4. **Access method**: Z.1 Data Download Program preformatted package “L.230 (Q) Trade Credit, n.s.a.” and CSV export.
+
+### Known Caveats
+
+1. **Revisions**: Z.1 is revised each quarterly release (benchmarking/methodology). Record vintage when replicating.
+2. **Scope**: “All sectors” aggregates corporates, households, government, ROW, etc. For a corporate-focused SCF lens, see the NFC series (FL103070005.Q).
+3. **Structural breaks**: GFC and COVID introduce level shifts/cycles affecting model fit.
+4. **Seasonality**: Stock series (NSA); seasonality is not the primary feature.
+
+---
+
+## Data Dictionary — Nonfinancial Corporate Business (FL103070005.Q)
+
+**Dataset name:** Federal Reserve Z.1 — L.230 (Q) Trade Credit — Nonfinancial corporate business; trade receivables; asset (FL103070005.Q)
+**File:** `data/l230_nfc_trade_receivables_2000on.csv`
+**Update frequency:** Quarterly (not seasonally adjusted; end of period)
+**Time coverage:** 2000 Q1 – 2025 Q2
+**Unit of observation:** One row per quarter (United States)
+**Units:** **Millions of U.S. dollars** (amounts outstanding, end of period)
+
+### Variables
+
+| Name  | Type   | Allowed values / format | Description | Source |
+|------|--------|--------------------------|-------------|--------|
+| date | string | `YYYY Qn`                | Quarter label (end of period) | Federal Reserve, Z.1 L.230 |
+| value| numeric| ≥ 0 (millions USD)       | Stock (level) of trade receivables for nonfinancial corporate business | Federal Reserve, Z.1 L.230 (series FL103070005.Q) |
+
+### Transformations / Processing
+
+1. Same handling as all-sectors: quarterly levels* in millions of dollars as provided by DDP (`Unit Multiplier = 1,000,000`).
+2. No missing values observed (2000Q1–2025Q2).
+3. No edits applied; NSA.
+4. Optional: divide by 1,000 for display in billions to align with L.230 HTML.
+
+### Provenance / Caveats
+
+1. **Series ID**: FL103070005.Q.
+2. **Why use**: Tighter proxy for corporate SCF programs (addressable base).
+3. **Trade-off**: Narrower scope than all-sectors; recommended as a scope sensitivity alongside FL893070005.Q.
+4. **Revisions/seasonality/structural breaks**: same caveats as above.
+
+---
+
+# Data Collection Methodology
+
+## Who collects the data
+
+- Board of Governors of the Federal Reserve System (FRB) compiles the Z.1 Financial Accounts of the United States each quarter.
+
+## What the series measure (scope & concept)
+
+1. Table L.230 Trade Credit reports amounts outstanding (levels), end of period, not seasonally adjusted.
+2. I use:
+  - FL893070005.Q — All sectors; trade receivables; asset (level) 
+  - (optional, for scope sensitivity) FL103070005.Q — Nonfinancial corporate business; trade receivables; asset (level)
+3. **Units:** Kept in millions of U.S. dollars as provided by the Data Download Program (DDP) where `Unit Multiplier = 1,000,000`.
+4. **Geography:** United States.
+
+## How the data are compiled
+
+1. Z.1 integrates multiple sources (surveys, administrative/regulatory records, national accounts) into sector-by-instrument balance sheets and flows.
+2. The L-tables (e.g., L.230) are levels (stocks); the F-tables are flows. The Z.1 team applies reconciliation and benchmarking across sources to produce a coherent system.
+
+## Release frequency & revisions
+
+1. **Quarterly** publication (typically Mar/Jun/Sep/Dec releases).
+2. **Revisions** occur with most releases (benchmark updates, source corrections, methodology refinements). For reproducibility, I record the vintage used: Z.1 release 2025-09-11.
+
+## Access method & processing steps
+
+1. Downloaded the preformatted DDP package: L.230 (Q) Trade Credit, n.s.a. (CSV).
+2. Filtered the series to FL893070005.Q (and optionally FL103070005.Q).
+3. Kept values in millions of USD; saved tidy two-column files `date,value`.
+4. **Coverage for analysis:** 2000 Q1 – 2025 Q2 (contemporary regimes for modeling).
+5. No imputations or edits; any modeling transforms (e.g., logs/Box-Cox) are documented in the forecasting write-up.
+
+---
+
+# Why this dataset intrigues me
+
+1. **Direct tie to SCF market sizing:** Trade receivables stock is a transparent proxy for the addressable base of supply-chain finance; it lets me connect an academic forecast to an industry-relevant estimate.
+2. **Authoritative & well-documented:** Z.1 is compiled by the Federal Reserve with clear definitions, regular releases, and a revision trail, which is ideal for defensible analysis and back-testing.
+3. **Macro cycle signal:** The series captures major cycles recent years (dot-com, GFC, COVID, post-COVID), giving economic context to changes in working-capital demand and potential SCF uptake.
+4. **Scope flexibility:** I can show All-sectors vs. Nonfinancial Corporate to illustrate how scope impacts the “addressable base,” then extend to ECB data for a cross-region comparison if want.
+5. **Practicality for the course timeline:** Quarterly data from 2000+ offers enough history for robust modeling without overcomplicating the project.
+
+
