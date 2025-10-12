@@ -1,0 +1,321 @@
+---
+title: "HW4_Modeling Forecasting"
+author: "Yufei Liu"
+date: "2025-10-11"
+output: html_document
+---
+
+## Series: Federal Reserve Z.1 — L.230 (Q), Nonfinancial corporate business; trade receivables; asset (FL103070005.Q).
+
+# Setup
+```{r}
+# Packages
+required <- c("readr","dplyr","ggplot2","scales","forecast")
+for (p in required) if (!requireNamespace(p, quietly = TRUE)) install.packages(p)
+lapply(required, library, character.only = TRUE)
+
+# File path (Windows: use forward slashes)
+csv_path <- "C:/Users/l2007/OneDrive/桌面/文档/Business Forecasting/Week 3/HW3 data_w SCFM project data/l230_nfc_trade_receivables_2000on.csv"
+
+# Read raw
+df_raw <- readr::read_csv(csv_path, show_col_types = FALSE)
+
+# Normalize to date/value (auto-detect)
+date_candidates  <- grep("date|period|time|quarter|qtr", names(df_raw), ignore.case = TRUE, value = TRUE)
+date_col         <- if (length(date_candidates)) date_candidates[1] else names(df_raw)[1]
+value_candidates <- setdiff(names(df_raw), date_col)
+value_col        <- value_candidates[1]
+
+df <- df_raw |>
+  dplyr::select(date = !!rlang::sym(date_col), value_raw = !!rlang::sym(value_col)) |>
+  dplyr::mutate(date = as.character(date),
+                value = readr::parse_number(as.character(value_raw))) |>
+  dplyr::filter(!is.na(value)) |>
+  dplyr::arrange(date)
+
+# Build quarterly ts from "YYYY Qn"/"YYYYQn"
+parse_yq <- function(x){
+  s <- gsub(" ", "", x)         # "YYYYQn"
+  y <- as.integer(substr(s, 1, 4))
+  q <- as.integer(substr(s, nchar(s), nchar(s)))
+  cbind(y, q)
+}
+yq <- parse_yq(df$date)
+start_year    <- yq[1,1]
+start_quarter <- yq[1,2]
+
+# Data in BILLIONS
+y_ts <- ts(df$value, start = c(start_year, start_quarter), frequency = 4)
+
+tail(df, 8)
+```
+
+# Plot Time Series
+```{r}
+# Time series plot (values are in BILLIONS of USD)
+plot(y_ts, main = "NFC Trade Receivables (FL103070005.Q)\nLevel, NSA (Billions USD)",ylab = "Billions of USD", xlab = "Quarter",lwd=2)
+```
+
+# Train & Test Split (hold out last 8 quarters)
+```{r}
+h <- 8
+n <- length(y_ts)
+train <- window(y_ts, end = time(y_ts)[n - h])
+test  <- window(y_ts, start = time(y_ts)[n - h + 1])
+
+# Visual check of split
+plot(train, main = "Train/Test Split (last 8 quarters held out)", ylab = "Billions of USD", xlab = "Quarter", lwd=2)
+lines(test, col = "magenta", lwd = 2)
+legend("topleft", c("Train","Test"), col = c("black","magenta"), lty = 1, bty = "n")
+```
+
+# Models
+```{r}
+# Mean of all history (baseline)
+Mean_forecast       <- meanf(train, h = h)
+
+# Naive & Seasonal Naive
+Naive_forecast      <- naive(train, h = h)
+sNaive_forecast     <- snaive(train, h = h)
+
+# Random Walk (no drift) & with Drift
+rwf_forecast        <- rwf(train, h = h)
+rwf_drift_forecast   <- rwf(train, h = h, drift = TRUE)
+
+# Moving Averages on level (smoothers; not used for accuracy)
+MA5  <- ma(y_ts, order = 5)
+MA9  <- ma(y_ts, order = 9)
+MA25 <- ma(y_ts, order = 25)
+
+# ETS (auto) on train
+ets_fit             <- ets(train)
+forecast_ets_2      <- forecast(ets_fit, h = h)
+
+# Holt-Winters on train
+HW_fit_full         <- HoltWinters(train)                 # level + trend + season (additive)
+forecast_HW_Full    <- forecast(HW_fit_full, h = h)
+
+# Simple Exponential Smoothing (no trend/season)
+SSE_Simple          <- HoltWinters(train, beta = FALSE, gamma = FALSE)
+forecast_SSE        <- forecast(SSE_Simple, h = h)
+```
+
+# Make slides readable
+```{r}
+par(mar=c(4.5,5,3,1), cex.axis=1.2, cex.lab=1.3, cex.main=1.4)
+```
+
+# Separate Charts
+```{r}
+##Mean
+plot(Mean_forecast, main="Mean Forecast (8Q)", ylab="Billions of USD", xlab="Quarter")
+```
+The mean forecast model is a horizontal average of the training sample. It ignores trend/seasonality and serves as a simple baseline.This model forecasts the same number for every future quarter: the average of the training period. The blue line is flat because the average does not change over time. The shaded band widens as we look further ahead, because uncertainty accumulates even though the mean stays constant. This approach is a simple baseline and is not designed to follow an upward trend like we see in NFC receivables.
+```{r}
+## Naive
+plot(Naive_forecast, main="Naive Forecast (8Q)", ylab="Billions of USD", xlab="Quarter")
+```
+The Naive model has a flat line at the last observed level of train. This is good when series is very persistent without trend.The model copies the last observed value and extends it forward. The forecast is a flat line that starts from the final training point. The fan around the line gets wider at longer horizons to show increasing uncertainty. This can work for very persistent series, but it ignores the clear upward trend in NFC receivables, so it tends to understate future levels.
+```{r}
+## Random Walk (no drift) and with Drift
+rwf_forecast <- rwf(train, h = h)         # overwrite to plot right away
+plot(rwf_forecast, main="Random Walk (no drift) (8Q)", ylab="Billions of USD", xlab="Quarter")
+
+rwf_drift_forecast <- rwf(train, h = h, drift=TRUE)
+plot(rwf_drift_forecast, main="Random Walk with Drift (8Q)", ylab="Billions of USD", xlab="Quarter")
+```
+RW (no drift) concludes the last value. RW with drift extrapolates trend from training. Drift often beats Naive when a clear trend exists. The random-walk model without drift assumes the series will stay where it is on average and then move around randomly. Its multi-step forecast is essentially the same flat line as the naive model. The widening fan expresses that the future could wander up or down. Because it does not include a built-in trend, it also fails to keep up with the rising path of NFC receivables.
+This The random-walk model with drift model adds a constant “drift,” which is the average quarter-to-quarter increase in the training data. The forecast is a straight line that slopes upward from the last observation. It captures a steady trend, which makes it more realistic for a growing series. However, if growth speeds up or slows down over time, a straight line can still miss those changes.
+```{r}
+## Seasonal Naive
+plot(sNaive_forecast, main="Seasonal Naive Forecast (8Q)", ylab="Billions of USD", xlab="Quarter")
+```
+Seasonal Naive model repeats the value from the same quarter last year. It works best with strong, stable seasonality (less critical in a level series). The seasonal naive model repeats last year’s value for the same quarter. The forecast zigzags because it mimics the quarter-to-quarter pattern seen a year earlier. This method is helpful when a series has a strong and stable seasonal rhythm. NFC receivables show only mild seasonality in levels, so repeating last year’s pattern does not perform as well as trend-focused models.
+```{r}
+## ETS (auto)
+plot(forecast_ets_2, main="ETS (auto) Forecast (8Q)", ylab="Billions of USD", xlab="Quarter")
+```
+The Error, Trend, Seasonality mode automatically selects level/trend/seasonal components and smoothing weights, typically strong for trending level data. The ETS model automatically chooses how much to weight level, trend, and any seasonality. The forecast line is smooth and bends as needed to track recent momentum. This flexibility helps the model follow the upward path without overreacting to short-term noise. For a business series that grows over time, ETS is often one of the best performers.
+```{r}
+## Holt–Winters (Additive)
+plot(forecast_HW_Full, main="Holt–Winters (Additive) Forecast (8Q)", ylab="Billions of USD", xlab="Quarter")
+```
+Holt–Winters model estimates level, trend, season; similar family to ETS but with fixed additive form. It is useful if mild seasonality exists. Holt–Winters additive also estimates level, trend, and a seasonal pattern. The forecast shows a smooth upward path with small seasonal wiggles if they are present. When the seasonal effect is limited, Holt–Winters behaves similarly to ETS. It is well suited to series like NFC receivables that have a clear trend and only modest seasonality.
+```{r}
+## Simple Exp. Smoothing (no trend/season)
+plot(forecast_SSE, main="Simple Exponential Smoothing (8Q)", ylab="Billions of USD", xlab="Quarter")
+```
+The Simple Exponential Smoothing model smooths the level only, which is good when there’s no trend/seasonality. Simple exponential smoothing models only the level and assumes no trend or seasonality. The forecast is nearly flat around a smoothed value of the recent history. Because NFC receivables are trending higher, this model tends to lag behind and under-forecast future quarters.
+
+# One Chart: Actuals + All Forecasts
+```{r}
+# Full overlay: Train/Test + five common models
+plot(train, main = "Actuals (Train/Test) & Forecasts — NFC", ylab = "Billions of USD", xlab = "Quarter", lwd=2)
+lines(test, col = "magenta", lwd = 2)
+lines(Naive_forecast$mean,     col = "steelblue",   lwd = 2)
+lines(sNaive_forecast$mean,    col = "purple",      lwd = 2)
+lines(rwf_drift_forecast$mean,  col = "forestgreen", lwd = 2)
+lines(forecast_ets_2$mean,     col = "darkorange",  lwd = 2)
+lines(forecast_HW_Full$mean,   col = "firebrick",   lwd = 2)
+legend("topleft",
+  c("Train","Test","Naive","sNaive","Drift","ETS","HW_Full"),
+  col = c("black","magenta","steelblue","purple","forestgreen","darkorange","firebrick"),
+  lty = 1, bty = "n")
+```
+In the combined chart, you can see the differences clearly. The naive and random-walk (no drift) lines stay flat and fall behind the data. The drift model rises in a straight line and keeps up better. ETS and Holt–Winters both rise and can curve with the data, which helps them match the most recent trajectory. The seasonal naive line zigzags because it copies last year’s seasonal pattern.
+```{r}
+# Zoom last ~6 years so 8Q forecasts are visible
+K <- 24
+start_zoom <- time(y_ts)[max(1, length(y_ts) - K)]
+y_zoom <- window(y_ts, start = start_zoom)
+
+plot(y_zoom, main="Forecast Overlays — NFC (last 6y)", ylab="Billions of USD", xlab="Quarter", lwd=2)
+lines(window(Naive_forecast$mean,     start=start_zoom), col="steelblue",   lwd=3)
+lines(window(sNaive_forecast$mean,    start=start_zoom), col="purple",      lwd=3)
+lines(window(rwf_drift_forecast$mean,  start=start_zoom), col="forestgreen", lwd=3)
+lines(window(forecast_ets_2$mean,     start=start_zoom), col="darkorange",  lwd=3)
+lines(window(forecast_HW_Full$mean,   start=start_zoom), col="firebrick",   lwd=3)
+legend("topleft",
+  c("Series","Naive","sNaive","Drift","ETS","HW_Full"),
+  col=c("black","steelblue","purple","forestgreen","darkorange","firebrick"),
+  lty=1, lwd=3, bty="n")
+```
+
+# Zoom on
+```{r}
+# Zoom window: last K quarters (e.g., 24 = ~6 years)
+K <- 24
+n <- length(y_ts)
+start_zoom <- time(y_ts)[max(1, n - (K + 0))]  # window start
+y_zoom <- window(y_ts, start = start_zoom)
+
+# Helper to get good y-limits that include the window AND each model forecast
+ylims_for <- function(fc_mean) {
+  rng <- range(c(y_zoom, window(fc_mean, start = start_zoom)), na.rm = TRUE)
+  pad <- 0.03 * diff(rng)  # a little padding
+  c(rng[1] - pad, rng[2] + pad)
+}
+
+# 1) Naive
+yl <- ylims_for(Naive_forecast$mean)
+plot(y_zoom, main="Naive Forecast (NFC) — last 6y", ylab="(same units as y_ts)", xlab="Quarter", ylim=yl, lwd=2)
+lines(window(Naive_forecast$mean, start = start_zoom), col="steelblue", lwd=3)
+legend("topleft", c("Series","Naive"), col=c("black","steelblue"), lty=1, lwd=3, bty="n")
+
+# 2) Seasonal Naive
+yl <- ylims_for(sNaive_forecast$mean)
+plot(y_zoom, main="Seasonal Naive Forecast (NFC) — last 6y", ylab="(same units)", xlab="Quarter", ylim=yl, lwd=2)
+lines(window(sNaive_forecast$mean, start = start_zoom), col="purple", lwd=3)
+legend("topleft", c("Series","sNaive"), col=c("black","purple"), lty=1, lwd=3, bty="n")
+
+# 3) Random Walk with Drift
+yl <- ylims_for(rwf_drift_forecast$mean)
+plot(y_zoom, main="Random Walk with Drift (NFC) — last 6y", ylab="(same units)", xlab="Quarter", ylim=yl, lwd=2)
+lines(window(rwf_drift_forecast$mean, start = start_zoom), col="firebrick", lwd=3)
+legend("topleft", c("Series","Drift"), col=c("black","firebrick"), lty=1, lwd=3, bty="n")
+
+# 4) ETS (auto)
+yl <- ylims_for(forecast_ets_2$mean)
+plot(y_zoom, main="ETS (auto) Forecast (NFC) — last 6y", ylab="(same units)", xlab="Quarter", ylim=yl, lwd=2)
+lines(window(forecast_ets_2$mean, start = start_zoom), col="darkorange", lwd=3)
+legend("topleft", c("Series","ETS"), col=c("black","darkorange"), lty=1, lwd=3, bty="n")
+
+# 5) Holt–Winters (Additive)
+yl <- ylims_for(forecast_HW_Full$mean)
+plot(y_zoom, main="Holt–Winters (Additive) (NFC) — last 6y", ylab="(same units)", xlab="Quarter", ylim=yl, lwd=2)
+lines(window(forecast_HW_Full$mean, start = start_zoom), col="forestgreen", lwd=3)
+legend("topleft", c("Series","HW_Full"), col=c("black","forestgreen"), lty=1, lwd=3, bty="n")
+
+# One chart
+# Same zoom window
+plot(y_zoom, main="Forecast Overlays — NFC (last 6y)", ylab="(same units)", xlab="Quarter", lwd=2)
+
+lines(window(Naive_forecast$mean,        start=start_zoom), col="steelblue",   lwd=3)
+lines(window(sNaive_forecast$mean,       start=start_zoom), col="purple",      lwd=3)
+lines(window(rwf_drift_forecast$mean,    start=start_zoom), col="firebrick",   lwd=3)
+lines(window(forecast_ets_2$mean,        start=start_zoom), col="darkorange",  lwd=3)
+lines(window(forecast_HW_Full$mean,      start=start_zoom), col="forestgreen", lwd=3)
+
+legend("topleft",
+  legend=c("Series","Naive","sNaive","Drift","ETS","HW_Full"),
+  col=c("black","steelblue","purple","firebrick","darkorange","forestgreen"),
+  lty=1, lwd=3, bty="n")
+```
+
+# Accuracy Comparison
+```{r}
+models_for_accuracy <- list(
+  Mean    = Mean_forecast,
+  Naive   = Naive_forecast,
+  RWF     = rwf_forecast,
+  Drift   = rwf_drift_forecast,
+  sNaive  = sNaive_forecast,
+  ETS     = forecast_ets_2,
+  HW_Full = forecast_HW_Full,
+  SES     = forecast_SSE
+)
+
+acc_tbl <- lapply(models_for_accuracy, function(fc) forecast::accuracy(fc, test)[1, c("RMSE","MAE","MAPE")])
+acc_tbl <- dplyr::bind_rows(acc_tbl, .id = "Model") |>
+  dplyr::mutate(across(c(RMSE,MAE,MAPE), as.numeric)) |>
+  dplyr::arrange(RMSE)
+
+acc_tbl
+
+best_rmse     <- acc_tbl$Model[which.min(acc_tbl$RMSE)]
+best_rmse_val <- acc_tbl$RMSE[which.min(acc_tbl$RMSE)]
+best_rmse; best_rmse_val
+```
+I compare models on the last eight quarters using RMSE. Trend-aware models (ETS, Holt–Winters, or Drift) generally beat the flat baselines because the series is growing. I select the best model as the one with the lowest RMSE in the table (ETS) and use that model for the final forecast.
+
+# Explanation of residuals for the winner
+```{r}
+# Use the model object (not just the forecast) where needed
+winner_obj <- switch(best_rmse,
+  "ETS"     = ets_fit,
+  "HW_Full" = HW_fit_full,
+  "SES"     = SSE_Simple,
+  "Naive"   = Naive_forecast$model,
+  "RWF"     = rwf_forecast$model,
+  "Drift"   = rwf_drift_forecast$model,
+  "sNaive"  = sNaive_forecast$model,
+  "Mean"    = Mean_forecast$model,
+  ets_fit
+)
+checkresiduals(winner_obj)
+```
+I check that residuals resemble white noise (no strong autocorrelation). If the Ljung–Box test is not significant, the model captured the main structure.
+
+# Final forecast of refitting the winning type on the full series
+```{r}
+full_ets     <- ets(y_ts)
+full_HW_Full <- HoltWinters(y_ts)
+full_SES     <- HoltWinters(y_ts, beta = FALSE, gamma = FALSE)
+
+h_final <- 8
+final_fc <- switch(best_rmse,
+  "ETS"     = forecast(full_ets,     h = h_final),
+  "HW_Full" = forecast(full_HW_Full, h = h_final),
+  "SES"     = forecast(full_SES,     h = h_final),
+  "Naive"   = naive(y_ts,            h = h_final),
+  "RWF"     = rwf(y_ts,              h = h_final),
+  "Drift"   = rwf(y_ts,              h = h_final, drift = TRUE),
+  "sNaive"  = snaive(y_ts,           h = h_final),
+  "Mean"    = meanf(y_ts,            h = h_final),
+  forecast(full_ets, h = h_final)
+)
+
+plot(final_fc, main = paste("Final", best_rmse, "Forecast — NFC (Next", h_final, "Quarters)"),
+     ylab = "Billions of USD", xlab = "Quarter")
+```
+I refit the winning model on the full history and produce an 8-quarter forecast. The plot shows the expected path and an uncertainty band. This is the version to present in the deck, since it uses all available data and the best-performing method from the comparison.
+
+Winner: ETS with RMSE = 68.11, MAE = 45.66, MAPE = 1.62%.
+This means, on average, the ETS forecasts miss the actual quarterly level by about 45–46 (billions) and by ~1.6% in percentage terms over the test period.
+Holt–Winters (Additive) with RMSE = 71.89.
+ETS reduces RMSE by about 5.3% vs HW_Full ( (71.89−68.11)/71.89 ≈ 5.3% ), so it’s a small but meaningful improvement.
+Drift (RMSE = 78.54) is respectable on a trending series, but ETS is ~13% better.
+Naive, RWF (no drift), and SES all cluster around RMSE ≈ 86, well behind the trend-aware models. (RWF and Naive are identical here; SES behaves like a flat level model.)
+Seasonal Naive performs much worse (RMSE ≈ 235) because this level series has weak/unstable seasonality.
+Mean is the weakest baseline (flat average of history), far off the mark for a growing series.
+
