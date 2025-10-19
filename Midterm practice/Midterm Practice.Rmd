@@ -1,0 +1,710 @@
+---
+title: "Midterm Practice"
+author: "Yufei Liu"
+date: "2025-10-11"
+output: html_document
+---
+
+# I. Plot and Inference
+• Show a time series plot.
+# Set up
+```{r}
+# File path (Windows: use forward slashes)
+csv_path <- "C:/Users/l2007/Desktop/文档/Business Forecasting/Week 3/HW3 data_w SCFM project data/l230_nfc_trade_receivables_2000on.csv"
+
+# "C:/Users/l2007/OneDrive/桌面/文档/Business Forecasting/Week 3/HW3 data_w SCFM project data/l230_nfc_trade_receivables_2000on.csv"
+
+# Read raw
+df_raw <- readr::read_csv(csv_path, show_col_types = FALSE)
+
+# Normalize to date/value (auto-detect)
+date_candidates  <- grep("date|period|time|quarter|qtr", names(df_raw), ignore.case = TRUE, value = TRUE)
+date_col         <- if (length(date_candidates)) date_candidates[1] else names(df_raw)[1]
+value_candidates <- setdiff(names(df_raw), date_col)
+value_col        <- value_candidates[1]
+
+df <- df_raw |>
+  dplyr::select(date = !!rlang::sym(date_col), value_raw = !!rlang::sym(value_col)) |>
+  dplyr::mutate(date = as.character(date),
+                value = readr::parse_number(as.character(value_raw))) |>
+  dplyr::filter(!is.na(value)) |>
+  dplyr::arrange(date)
+
+# Build quarterly ts from "YYYY Qn"/"YYYYQn"
+parse_yq <- function(x){
+  s <- gsub(" ", "", x)         # "YYYYQn"
+  y <- as.integer(substr(s, 1, 4))
+  q <- as.integer(substr(s, nchar(s), nchar(s)))
+  cbind(y, q)
+}
+yq <- parse_yq(df$date)
+start_year    <- yq[1,1]
+start_quarter <- yq[1,2]
+
+# Data in BILLIONS
+y_ts <- ts(df$value, start = c(start_year, start_quarter), frequency = 4)
+```
+# Plot Time Series
+```{r}
+# assumes y_ts is the quarterly series (freq = 4) from HW4
+plot(y_ts,main = "NFC Trade Receivables (FL103070005.Q)\nLevel, NSA (Billions USD)",ylab = "Billions of USD", xlab = "Quarter", lwd = 2)
+```
+• Please summarize your observations of the time series plot
+  The series climbs steadily and has a strong upward trend from 2001 to 2025, with the slope steepening after 2017 and especially post-2020. There is a visible dip around 2020 (COVID pandemic shock) that is followed by a sharp rebound and faster growth to new highs. Fluctuations appear larger in the later years, consistent with the higher level of the series. 
+  
+• Plot and describe your observations from the Acf 
+```{r}
+library(forecast)
+# ACF of the level series (as in Lecture 3)
+Acf(y_ts, main = "ACF — NFC Trade Receivables (quarterly)")
+```
+  There’s no obvious repeating pattern every four quarters in the autocorrelation function. The ACF also doesn’t show distinct spikes at lag 4. The ACF tails off slowly rather than cutting off. It decays very slowly from Lag 1 near 1, consistent with a trend that shocks tend to carry forward.
+
+# II. Central Tendency
+• What is the min, max, mean, median, 1st, and 3rd Quartile values of the times series?
+```{r}
+# Min. 1st Qu. Median Mean 3rd Qu. Max.
+summary(as.numeric(y_ts))
+```
+• Show the box plot. 
+```{r}
+x <- as.numeric(y_ts)
+boxplot(x, horizontal = TRUE,
+        main = sprintf("Boxplot (N = %d)", length(x)),
+        xlab = "Billions USD")
+# dashed line at median
+abline(v = median(x), lty = 2)
+```
+• Can you summarize your observation about the time series from the summary stats and box plot?
+  The median is 2,503, and the IQR is 1,567 (Q3 3,685 − Q1 2,118). The central half of observations lies roughly between $2.1T and $3.7T. The range of values spans $1.70T to $5.61T, showing a very wide overall spread.
+  For skewness, the mean (2,953) is greater than the median (2,503), and the upper whisker is much longer than the lower, which means right skew (more/larger high values in recent years). No extreme outlier points beyond the whiskers in the box plot. The increases look gradual rather than isolated spikes. The distribution has shifted upward over time (consistent with the trend in your line plot). Later, larger values inflate the mean and widen the spread.
+
+# III. Naive Method
+• Output
+```{r}
+library(forecast)
+# 1 year ahead for quarterly data
+h <- 4
+naive_forecast <- naive(y_ts, h = h)
+# prints method, mean forecasts, and prediction intervals
+naive_forecast
+
+plot(naive_forecast,main = "Naive Forecast (h = 4 quarters)",ylab = "Billions USD", xlab = "Quarter")
+# Point Forecast, Lo 80/Hi 80, Lo 95/Hi 95
+as.data.frame(naive_forecast)
+
+# last observed value
+tail(y_ts, 1)
+# the 4 point forecasts
+rep(tail(y_ts, 1), h)
+```
+  Under the Naive model, each point forecast equals the last observed value (5606.114), while the 80% and 95% prediction intervals provide bands of likely outcomes that widen as the forecast horizon increases due to accumulating uncertainty.
+
+• Perform Residual Analysis for this technique.
+o Do a plot of residuals. What does the plot indicate?
+```{r}
+res_n <- residuals(naive_forecast)
+plot(res_n, main = "Residuals - Naive", ylab = "Residual")
+```
+  Centered roughly around 0, but variance grows over time (later years swing more). Many positive residuals after 2017 indicate that the naive (last-value) under-forecasts during sustained growth. Large negative spikes (e.g., 2020, 2024) when the series drops suddenly indicate naive over-forecasts after shocks.
+  Not IDD noise. There are signs of heteroskedasticity and regime shifts that naive models can’t capture.
+
+o Do a Histogram plot of residuals. What does the plot indicate?
+```{r}
+hist(res_n, breaks = "FD", main = "Histogram - Residuals (Naive)")
+```
+  The graph is right-skewed. There is mass on the positive side with a long left tail which are big negative shocks. Positive skew is consistent with an upward trend (actuals often exceed the last value).
+  Distribution is not symmetric. Naive tends to under-predict in an uptrend, with occasional large negative errors in downturns.
+
+o Do a plot of fitted values vs. residuals. What does the plot indicate?
+```{r}
+plot(fitted(naive_forecast), res_n, pch = 16,main = "Fitted vs Residuals - Naive");abline(h = 0, lty = 2)
+
+# smaller points + transparency + smooth + grid
+f <- as.numeric(fitted(naive_forecast))
+r <- as.numeric(res_n)
+# drop any NA/Inf
+ok <- is.finite(f) & is.finite(r)
+f2 <- f[ok]; r2 <- r[ok]
+plot(f2, r2,
+     pch = 16, cex = 0.7,
+     col = rgb(0, 0, 0, 0.35),
+     xlab = "Fitted (last observed value)",
+     ylab = "Residual",
+     main = "Fitted vs Residuals — Naive")
+abline(h = 0, lty = 2)
+# compute, then draw the smooth explicitly
+# robust smoother
+lw <- lowess(f2, r2, f = 0.6)
+lines(lw$x, lw$y, lwd = 2, col = "steelblue")
+grid()
+```
+  Fan-shaped residual spread increases at higher fitted values. Clusters of positive residuals at higher levels in recent years.
+  Errors grow with the level, so constant-variance assumptions don’t hold.
+
+o Do a plot of actual values vs. residuals. What does the plot indicate?
+```{r}
+plot(as.numeric(y_ts), res_n, pch = 16,main = "Actual vs Residuals - Naive");abline(h = 0, lty = 2)
+```
+  As actuals increase, residual magnitude increases, many are positive at high levels.
+  Again heteroskedasticity and systematic under-forecasting during strong growth (naive lags the trend).
+
+o Do an ACF plot of the residuals. What does this plot indicate?
+```{r}
+Acf(res_n, main = "ACF - Residuals (Naive)")
+```
+  Several lags outside the bounds of 0.2 (notably lag 1 and some medium lags), but serial correlation remains.
+  Residuals are not white noise, there’s leftover structure of trend dynamics/level-dependent effects that the naive model doesn’t explain.
+
+• Print the five measures of accuracy for this forecasting technique
+```{r}
+# ME, RMSE, MAE, MPE, MAPE, etc.
+accuracy(naive_forecast)
+
+# Five standard accuracy measures for Naive
+acc_naive <- accuracy(naive_forecast)
+acc5 <- acc_naive[, c("ME","RMSE","MAE","MPE","MAPE")]
+round(acc5, 3)
+```
+
+• Forecast
+o Time series value for next year. Show table and plot
+```{r}
+library(forecast)
+# Next 4 quarters (quarterly data)
+h <- 4
+naive_forecast <- naive(y_ts, h = h)
+# Table (point forecast + 80/95% intervals)
+round(as.data.frame(naive_forecast), 3)
+# Plot
+plot(naive_forecast, main = "Naive Forecast - Next 4 Quarters",ylab = "Billions USD", xlab = "Quarter")
+grid()
+```
+
+• Summarize this forecasting technique 
+o How good is the accuracy?
+  The naive model is an acceptable baseline, but its accuracy is limited for this series. The positive mean error (ME) shows it tends to under-forecast because the data are trending upward. RMSE is larger than MAE, which means a few big misses occur around sharp drops or rebounds. The percentage errors indicate usable but not strong performance for planning. This technique is okay for a quick benchmark, but a trend-aware model (e.g., random walk with drift, SES, or ETS with trend) should deliver better accuracy.
+
+o What does it predict the time series value will be in one year?
+```{r}
+as.numeric(naive_forecast$mean[4])
+```
+The naive model assumes the series follows a “last-value-persists” pattern (a random walk without drift), so it predicts the series will be 5,606.114 billion USD in one year (i.e., 2026 Q2), which is the same as the last observed value (2025 Q2).
+
+o Other observation
+1. The prediction intervals widen as the horizon increases, showing uncertainty grows the further we look out.
+2. Residuals are autocorrelated and larger at higher levels, so errors are not white noise and variance is not constant.
+3. The model systematically under-forecasts during sustained upswings because it cannot capture trend.
+4. There is no clear quarterly seasonality in the residuals, so seasonality is not the main issue here.
+5. Naive is useful as a simple benchmark to compare MAPE/RMSE against better models.
+6. For decision use, prefer a trend-aware alternative (random walk with drift, SES, or ETS with trend).
+
+# IV. Simple Moving Averages
+• Plot the graph for the time series.
+```{r}
+library(forecast)
+plot(y_ts, main = "Simple Moving Averages - Base Plot",ylab = "Billions USD",xlab = "Quarter", lwd = 2)
+grid()
+```
+• Show the Simple Moving average of order three on the plot above in Red
+```{r}
+library(forecast)
+plot(y_ts, main = "Simple Moving Averages - Base Plot",ylab = "Billions USD", xlab = "Quarter", lwd = 1)
+grid()
+
+lines(forecast::ma(y_ts, order = 3),col = "red",lwd = 2)
+legend("topleft", "MA(3)", col = "red", lty = 1, bty = "n")
+```
+• Show the Simple Moving average of order six on the plot above in Blue
+```{r}
+plot(y_ts, main = "Simple Moving Averages - Base Plot",ylab = "Billions USD", xlab = "Quarter", lwd = 1)
+grid()
+
+lines(forecast::ma(y_ts, order = 6),col = "blue",lwd = 2)
+legend("topleft", "MA(6)", col = "blue", lty = 1, bty = "n")
+```
+• Show the Simple Moving average of order nine on the plot above in Green
+```{r}
+plot(y_ts, main = "Simple Moving Averages - Base Plot",ylab = "Billions USD", xlab = "Quarter", lwd = 1)
+grid()
+
+lines(forecast::ma(y_ts, order = 9),col = "green",lwd = 2)
+legend("topleft", "MA(9)", col = "Green", lty = 1, bty = "n")
+```
+
+```{r}
+library(forecast)
+plot(y_ts, main = "Simple Moving Averages - Base Plot",ylab = "Billions USD", xlab = "Quarter", lwd = 1)
+grid()
+
+lines(forecast::ma(y_ts, order = 3),col = "red",lwd = 2)
+lines(forecast::ma(y_ts, order = 6),col = "blue",lwd = 2)
+lines(forecast::ma(y_ts, order = 9),col = "green",lwd = 2)
+legend("topleft", c("MA(3)", "MA(6)", "MA(9)"),col = c("red","blue","green"), lty = 1, bty = "n")
+```
+• (Bonus) Show the forecast for the next 12 months using one of the simple average orders that you feel works best for the time series
+  Since MA itself doesn’t “project” forward, the common lecture pattern is smoothing with MA(k), then carry the last smoothed value forward using a naive forecast on the smoothed series.
+```{r}
+library(forecast)
+
+# Horizon = one year ahead (12 if monthly, 4 if quarterly)
+freq <- frequency(y_ts)
+h <- if (freq == 12) 12 else 4
+
+# Choose the MA order works best (MA(6))
+k <- 6
+# smoothed series (ts with NAs at start)
+sm <- forecast::ma(y_ts, order = k)
+
+# Forecast: naive on the smoothed series (carry last smoothed value forward)
+fc_ma <- naive(na.omit(sm), h = h)
+
+# Table (point forecast + 80/95% intervals)
+round(as.data.frame(fc_ma), 3)
+
+# Plot
+plot(fc_ma, main = paste0("Forecast via MA(", k, ") - Next ", h, " Periods"), ylab = "Billions USD", xlab = if (freq==12) "Month" else "Quarter")
+grid()
+```
+• What are your observations of the plot as the moving average order goes up?
+  The line gets smoother as the order increases. Short-term bumps are averaged out. The amplitude of swings is reduced, and peaks and troughs are flattened as order increases. The MA curve reacts more slowly to new changes (more lag) with higher orders.
+  In trending periods, higher-order MAs tend to undershoot on the way up and overshoot on the way down because of more bias around turning points. The start of the series shows more missing/flat segments because a longer window needs more past values. For quarterly data, MA(4) roughly captures a one-year level, but MA(6) or MA(9) smooths even more but adds more lag.
+  So, use a smaller order while needing responsiveness, and use a larger order while needing a stable level and not minding delay. For this upward-trending series, a mid-range order (e.g., MA(6)) balances smoothness with timely response.
+
+#Simple Smoothing
+• Perform a simple smoothing forecast for the next 12 months for the time series.
+```{r}
+library(forecast)
+
+# Horizon = one year ahead (12 if monthly, 4 if quarterly)
+freq <- frequency(y_ts)
+h <- if (freq == 12) 12 else 4
+
+# Fit SES and forecast
+ses_fit <- ses(y_ts, h = h)
+
+# Table (point forecast + 80/95% prediction intervals)
+round(as.data.frame(ses_fit), 3)
+
+# Plot
+plot(ses_fit, main = "Simple Exponential Smoothing - One-Year-Ahead Forecast", ylab = "Billions USD", xlab = if (freq == 12) "Month" else "Quarter")
+grid()
+```
+o What is the value of alpha?  What does that value signify?
+```{r}
+# Robust alpha extraction across forecast versions
+alpha_val <- NA_real_
+if (!is.null(ses_fit$model$alpha)) {
+  alpha_val <- as.numeric(ses_fit$model$alpha)
+} else if (!is.null(ses_fit$model$par) && "alpha" %in% names(ses_fit$model$par)) {
+  alpha_val <- as.numeric(ses_fit$model$par[["alpha"]])
+} else if (!is.null(ses_fit$model$pars) && "alpha" %in% names(ses_fit$model$pars)) {
+  alpha_val <- as.numeric(ses_fit$model$pars[["alpha"]])
+}
+
+round(alpha_val, 5)
+
+# From HoltWinters (simple smoothing)
+HW_Simple <- HoltWinters(y_ts, beta = FALSE, gamma = FALSE)
+round(HW_Simple$alpha, 5)
+```
+  Alpha is the weight the model places on the most recent observation. A larger alpha closer to 1 means the forecast updates quickly to new data, which means less smoothing. A smaller alpha closer to 0 means the forecast changes slowly, which means more smoothing and lag.
+  Alpha = 0.999 means the latest quarter gets 99.9% of the weight, so the model updates moderately quickly while still smoothing short-term noise.
+
+o What is the value of the initial state?
+```{r}
+# Initial level (robust across versions)
+init_level <- if (!is.null(ses_fit$model$init) && "l" %in% names(ses_fit$model$init)) {ses_fit$model$init[["l"]]} else if (!is.null(ses_fit$model$states) && "l" %in% colnames(ses_fit$model$states)) {ses_fit$model$states[1, "l"]} else NA_real_
+
+round(as.numeric(init_level), 3)
+```
+o What is the value of sigma?  What does the sigma signify?
+```{r}
+# Sigma = residual standard deviation (innovation scale)
+res   <- residuals(ses_fit)
+sigma <- sqrt(mean(res^2, na.rm = TRUE))
+round(sigma, 3)
+```
+  Sigma is the standard deviation of the forecast errors (residuals) from the SES model. It measures the typical size of the miss in the same units as the data (billions of USD). Smaller sigma value means the model is fitting more tightly and will produce narrower prediction intervals. Larger sigma value means errors are bigger on average and intervals will be wider.
+  Sigma = 88.055 means the SES model’s typical one-step forecast error is about $88.06B. In plain terms, on average the model’s misses are around 88 billion.
+  Relative to the series level (mean is $2,953B), sigma is roughly 3%. That suggests the SES fit is reasonably tight for a simple smoother, though there’s still meaningful noise the model can’t capture. 88.055 is the residual standard deviation, which is a compact summary of how much the SES forecasts typically deviate from actuals.
+
+• Perform Residual Analysis for this technique.
+o Do a plot of residuals. What does the plot indicate?
+```{r}
+# Residuals from SES
+res_ses <- residuals(ses_fit)
+plot(res_ses, main = "Residuals - Simple Exponential Smoothing (SES)", ylab = "Residual", xlab = "Time")
+abline(h = 0, lty = 2)
+grid()
+```
+  Residuals fluctuate around zero which is good, but the spread grows over time, so variance is not perfectly constant. There are runs. After 2017 there are many positive residuals, meaning SES under-forecasts during the strong uptrend. Large negative spikes around 2020 and again later show SES over-forecasted after sudden drops. SES removes some noise but still lags the trend and leaves serial correlation.
+
+o Do a Histogram plot of residuals. What does the plot indicate?
+```{r}
+# Histogram of SES residuals
+hist(res_ses, breaks = "FD", main = "Histogram - Residuals (SES)", xlab = "Residual")
+# reference line at zero
+abline(v = 0, lty = 2)
+```
+The distribution is not perfectly symmetric. It is centered near but slightly above zero, so SES slightly under-forecasts on average. There is a longer left tail, driven by a few large negative errors during sudden drops (e.g., 2020). This asymmetry and tail behavior suggest the model still misses turning points, even though typical errors are moderate.
+
+o Do a plot of fitted values vs. residuals. What does the plot indicate?
+```{r}
+# Fitted vs residuals for SES
+f <- as.numeric(fitted(ses_fit))
+r <- as.numeric(residuals(ses_fit))
+
+ok <- is.finite(f) & is.finite(r)
+f <- f[ok]; r <- r[ok]
+
+plot(f, r, pch = 16, cex = 0.7, col = rgb(0,0,0,0.35), xlab = "Fitted (SES)", ylab = "Residual", main = "Fitted vs Residuals - SES")
+abline(h = 0, lty = 2)
+lines(lowess(f, r, f = 0.6), lwd = 2, col = "steelblue")
+grid()
+```
+  Residuals spread out more at higher fitted values (fan shape), so variance is not constant. The smooth line sits slightly above zero at higher fitted levels, showing under-forecasting when the series is high and rising. The pattern means residuals are not purely random. The SES model without trend still lags the uptrend.
+
+o Do a plot of actual values vs. residuals. What does the plot indicate?
+```{r}
+# Actual vs residuals (SES)
+a <- as.numeric(y_ts)
+r <- as.numeric(residuals(ses_fit))
+
+ok <- is.finite(a) & is.finite(r)
+a <- a[ok]; r <- r[ok]
+
+plot(a, r, pch = 16, cex = 0.7, col = rgb(0,0,0,0.35), xlab = "Actual", ylab = "Residual", main = "Actual vs Residuals - SES")
+abline(h = 0, lty = 2)
+lines(lowess(a, r, f = 0.6), lwd = 2, col = "steelblue")
+grid()
+```
+  Residuals get larger as the actual value increases (a clear fan shape), so the error variance is not constant. The smooth line is above zero for high actuals, which means SES under-forecasts when the series is high and rising. There are a few large negative outliers after sharp downturns, showing SES can over-forecast right after drops. Errors are not white noise. Variance grows with level and the model lags the uptrend.
+
+o Do an ACF plot of the residuals? What does this plot indicate?
+```{r}
+# ACF of SES residuals
+res_ses <- residuals(ses_fit)
+Acf(na.omit(res_ses), lag.max = 24, main = "ACF - Residuals (SES)")
+```
+  There is a significant positive spike at lag 1, several bars exceed the dashed bounds. That means the errors are autocorrelated. Today’s error tends to be followed by a similar-signed error next period. Errors aren’t white noise. There is no dominant spike at lag 4, so clear quarterly seasonality is not the main issue.
+
+• Print the five measures of accuracy for this forecasting technique
+```{r}
+ses_fit <- ses(y_ts, h = if (frequency(y_ts)==12) 12 else 4)
+acc_ses <- accuracy(ses_fit)
+round(acc_ses[, c("ME","RMSE","MAE","MPE","MAPE")], 3)
+```
+
+• Forecast
+o Time series value for next year. Show table and plot
+```{r}
+# Table (point forecast + 80/95% intervals)
+round(as.data.frame(ses_fit), 3)
+
+# Add year-quarter labels
+Quarter <- as.character(zoo::as.yearqtr(time(ses_fit$mean)))
+cbind(Quarter, round(as.data.frame(ses_fit), 3))
+
+# Plot
+plot(ses_fit, main = "SES - One-Year-Ahead Forecast", ylab = "Billions USD", xlab = if (frequency(y_ts)==12) "Month" else "Quarter")
+grid()
+
+# Extract the one-year-ahead point forecast value
+as.numeric(ses_fit$mean[h])
+```
+
+• Summarize this forecasting technique
+o How good is the accuracy?
+  The SES model’s accuracy is good for a simple smoother. For the bias, ME is +37.3 which is a small under-forecast on average relative to a 5,000 to 6,000 level. For the scale of errors, MAE (70.2) is smaller than RMSE (88.1), so most misses are modest but a few spikes are larger. For the percent error, MAPE is 2.41%, which is low and usable for planning.
+
+o What does it predict the time series value will be in one year?
+```{r}
+as.numeric(ses_fit$mean[4])
+```
+  This is the SES point forecast for one year ahead (2026 Q2). SES without trend produces a flat multi-step forecast equal to the last fitted level. The prediction intervals widen with horizon.
+
+o Other observation
+1. The prediction intervals widen across the four quarters, so uncertainty grows with horizon.
+2. Residuals are autocorrelated and larger at high levels (fan shape), so errors are not white noise and variance is not constant.
+3. The model slightly under-forecasts during strong upswings, after sudden drops it can over-forecast briefly.
+4. Estimated α gives moderate smoothing so that updates are steady, not jumpy.
+5. Sigma is 88 implies typical one-step misses around $88B, 3% is small relative to the series level.
+6. SES is a solid baseline, but because it has no trend component, Holt/ETS with trend should capture the upward trajectory better.
+
+#Holt-Winters
+• Perform a Holt-Winters forecast for the next 12 months for the time series.
+```{r}
+library(forecast)
+h <- if (frequency(y_ts) == 12) 12 else 4
+
+# Holt-Winters (let R pick α, β, γ if needed), simple if no trend/seasonality detected
+HW_full <- HoltWinters(y_ts)
+fc_hw   <- forecast(HW_full, h = h)
+
+# Table (point forecast + 80/95% intervals)
+round(as.data.frame(fc_hw), 3)
+
+# Plot
+plot(fc_hw, main = "Holt-Winters - One-Year-Ahead Forecast", ylab = "Billions USD", xlab = if (frequency(y_ts)==12) "Month" else "Quarter")
+grid()
+
+# Report parameters and fit quality
+c(alpha = round(HW_full$alpha,3), beta  = round(HW_full$beta,3), gamma = round(HW_full$gamma,3))
+HW_full$SSE
+accuracy(fc_hw)[, c("ME","RMSE","MAE","MPE","MAPE")]
+```
+o What is the value of alpha?  What does that value signify?
+```{r}
+alpha_hw <- HW_full$alpha
+round(alpha_hw, 3)
+```
+  Alpha is 0.939, so the level updates aggressively toward the latest quarter. The model is highly responsive with little smoothing, it gives about 94% weight to the newest observation and only 6% to the prior level each update.
+
+o What is the value of beta? What does that value signify?
+```{r}
+beta_hw <- HW_full$beta
+round(beta_hw, 3)
+```
+  Beta is 0.092. Because alpha is high and beta is low, the model adjusts the level very quickly while keeping the trend changes. That means the model gives about 9% weight to new information when updating the trend (slope) and 91% to the previous trend.
+
+o What is the value of gamma? What does that value signify?
+```{r}
+gamma_hw <- HW_full$gamma
+round(gamma_hw, 3)
+```
+  Gamma is 1. The seasonal indices are updated as fast as possible, which means no smoothing. This is very responsive but may chase noise if true seasonality is weak or stable. This means the Holt–Winters model gives 100% weight to the newest seasonal information and 0% to the previous seasonal pattern each update.
+
+o What is the value of initial states for the level, trend, and seasonality? What do these values signify?
+```{r}
+lvl0 <- as.numeric(head(HW_full$fitted[,"level"],   1))
+tr0  <- as.numeric(head(HW_full$fitted[,"trend"],   1))
+sea0 <- as.numeric(head(HW_full$fitted[,"season"],  1))
+
+round(c(level = lvl0, trend = tr0, seasonality = sea0), 3)
+```
+  Level is 1915.441 This is the model’s starting baseline at the beginning of the series. It’s very close to the first actual value 1947, so the model begins near the observed level.
+  Trend is −20.488 per quarter. This is the initial slope. The negative value means that at the very beginning, the model assumed a slight downward drift each quarter. 
+  Seasonality is 0.225. This is the initial seasonal adjustment for that first season. With additive Holt–Winters model, it means this quarter starts about +$0.225B above the baseline. It is small relative to the level.
+
+o What is the value of sigma?  What does the sigma signify?
+```{r}
+res_hw <- na.omit(residuals(fc_hw))
+sigma  <- sqrt(mean(res_hw^2))
+round(sigma, 3)
+
+sigma2 <- sqrt(HW_full$SSE / length(res_hw))
+round(sigma2, 3)
+```
+  Sigma is 74.756. This means the Holt–Winters model’s typical one-step error is about $74.76B. Forecasts usually miss the actual by roughly 75 billion. 
+
+• Perform Residual Analysis for this technique.
+o Do a plot of residuals. What does the plot indicate?
+```{r}
+res_hw <- residuals(fc_hw)
+plot(res_hw, main = "Residuals - Holt-Winters", ylab = "Residual", xlab = "Time")
+abline(h = 0, lty = 2)
+grid()
+```
+  Residuals fluctuate around zero. The spread is smaller than with SES, so Holt–Winters fits tighter. There are short same sign errors, and a large negative spike around 2020 from the sudden drop. Variance is more stable overall, though a few later periods still show bigger swings.
+
+o Do a Histogram plot of residuals. What does the plot indicate?
+```{r}
+hist(res_hw, breaks = "FD", main = "Histogram - Residuals (Holt-Winters)", xlab = "Residual")
+abline(v = 0, lty = 2)
+lines(density(na.omit(res_hw)), lwd = 2) 
+```
+  The residuals are centered close to zero, so bias is small. Most of values are in a tight band from −50 to +100, showing smaller typical errors than SES. There is a long left tail from a few large negative errors around the 2020 shock, so the distribution isn’t symmetric.
+
+o Do a plot of fitted values vs. residuals. What does the plot indicate?
+```{r}
+# Fitted vs residuals - Holt-Winters
+f <- as.numeric(fitted(fc_hw))        
+r <- as.numeric(residuals(fc_hw))
+ok <- is.finite(f) & is.finite(r)
+f <- f[ok]; r <- r[ok]
+
+plot(f, r, pch = 16, cex = 0.7, col = rgb(0,0,0,0.35), xlab = "Fitted (Holt-Winters)", ylab = "Residual", main = "Fitted vs Residuals - Holt-Winters")
+abline(h = 0, lty = 2)
+lines(lowess(f, r, f = 0.6), lwd = 2, col = "steelblue")
+grid()
+```
+  Residuals are centered close to zero across fitted values, so bias is small. The spread is moderate and fairly even, stronger than the fan shape with SES. The smooth line shows a slight hump. There are a few negative shock periods, yet most points cluster tightly.
+
+o Do a plot of actual values vs. residuals. What does the plot indicate?
+```{r}
+# Actual vs residuals - Holt-Winters
+a <- as.numeric(y_ts)
+r <- as.numeric(residuals(fc_hw))
+ok <- is.finite(a) & is.finite(r)
+a <- a[ok]; r <- r[ok]
+
+plot(a, r, pch = 16, cex = 0.7, col = rgb(0,0,0,0.35), xlab = "Actual", ylab = "Residual", main = "Actual vs Residuals - Holt-Winters")
+abline(h = 0, lty = 2)
+lines(lowess(a, r, f = 0.6), lwd = 2, col = "steelblue")
+grid()
+```
+  Residuals are centered near zero across the range of actual values so that little overall bias. The spread is fairly uniform, so variance is closer to constant. The smooth line shows a small hump. There are a few negative outliers persist around shock periods.
+
+o Do an ACF plot of the residuals? What does this plot indicate?
+```{r}
+# ACF of Holt-Winters residuals
+res_hw <- residuals(fc_hw)
+Acf(na.omit(res_hw), lag.max = 24, main = "ACF - Residuals (Holt–Winters)")
+```
+  The lag-1 bar is small and just near the bound, so short-run autocorrelation is weak. Most bars lie in the dashed limits and die out quickly. There are no clear spikes at seasonal lags 4, 8, 12, so leftover seasonality is minimal.
+
+• Print the five measures of accuracy for this forecasting technique 
+```{r}
+acc_hw <- accuracy(fc_hw)
+round(acc_hw[, c("ME","RMSE","MAE","MPE","MAPE")], 3)
+```
+
+• Forecast
+o Time series value for next year. Show table and plot
+```{r}
+library(forecast)
+h <- if (frequency(y_ts) == 12) 12 else 4
+
+# Fit & forecast
+HW_full <- HoltWinters(y_ts)
+fc_hw   <- forecast(HW_full, h = h)
+
+round(as.data.frame(fc_hw), 3)
+
+plot(fc_hw, main = "Holt-Winters - One-Year-Ahead Forecast", ylab = "Billions USD", xlab = if (frequency(y_ts)==12) "Month" else "Quarter")
+grid()
+```
+
+• Summarize this forecasting technique
+o How good is the accuracy?
+  ME is 11.95 near zero, so little systematic bias. RMSE is 74.76, MAE is 53.81. Both are smaller than SES (RMSE is 88.06, MAE is 70.18), so the fit is tighter. MAPE is 1.79% which is better than SES’s 2.41%. So, Holt–Winters delivers good accuracy here and clearly improves on SES.
+
+o What does it predict the time series value will be in one year?
+```{r}
+# One-year-ahead point forecast value (the last row of the table)
+as.numeric(fc_hw$mean[h])
+```
+Point forecast (2026 Q2): 5,910.394 billion USD.
+
+o Other observation
+  Parameters imply a very responsive level (α = 0.939), a cautiously updating trend (β = 0.092), and fully responsive seasonality (γ = 1). Forecasts show a continued upward path, and the prediction bands widen with horizon, reflecting growing uncertainty.
+
+#Decomposition
+• Plot the decomposition of the time series.
+```{r}
+# STL decomposition
+fit_stl <- stl(y_ts, s.window = "periodic", robust = TRUE)
+plot(fit_stl, main = "STL Decomposition - Quarterly")
+```
+
+• Is the time series seasonal?
+  The plot shows a repeating quarterly pattern, but the seasonal component is small (about ±40B around the level), which is <2% of the series level. Earlier ACF also lacked strong spikes at lags 4, 8, etc. So the series is weakly seasonal and strongly trend-dominated.
+
+• Is the decomposition additive or multiplicative?
+  STL was fit on the original scale. This fit the additive form: y_t = Trend_t + Seasonal_t + Remainder_t. The seasonal swings look constant in size across time, so it is not growing with the level. This supports an additive decomposition. If seasonality grows with the level, log the series and decompose multiplicatively.
+
+• If seasonal, what are the values of the seasonal monthly indices?
+```{r}
+fit_stl <- stl(y_ts, s.window = "periodic", robust = TRUE)
+seas <- seasonal(fit_stl)
+
+idx <- tapply(seas, cycle(y_ts), mean)
+round(idx, 3)
+```
+  Seasonally adjusted value = observed − index. Q1 tends to be about $4.9B below the underlying level. Q2 is about $34.0B above the level. Q3 is about $20.1B above the level. Q4 is about $49.2B below the level. The sum is 0 fits the  additive seasonality.
+
+• For which month is the time series value high, and for which month is it low?
+Highest: Q2 index +33.968.
+Lowest: Q4 index −49.181
+
+• Can you think of the reason behind the high and low values in those months?
+  Q2 becomes higher build-up after Q1.
+1. Many firms book strong spring sales; with typical net-30/60 terms, invoices from late Q1 and early Q2 are still outstanding in Q2, lifting receivables.
+2. Projects initiated in Q1 often reach billable milestones in Q2, so more invoices are issued and remain open that quarter.
+  Q4 becomes lower for year-end clean-up.
+1. Firms push collections before fiscal year-end to improve cash and working-capital metrics, pulling receivables down in Q4.
+2. Year-end early-payment discounts and sales/collection targets spur customers to pay faster, further reducing Q4 balances.
+3. Companies may write off or provision for doubtful accounts before year-end, trimming reported receivables in Q4.
+
+• Show the plot for the time series adjusted for seasonality. Overlay this with the line for actuals. Does seasonality have big fluctuations in the value of time series?
+```{r}
+# Decompose and seasonally adjust (additive STL)
+fit_stl <- stl(y_ts, s.window = "periodic", robust = TRUE)
+y_sa    <- seasadj(fit_stl)
+
+# Plot actual vs seasonally adjusted (overlay)
+plot(y_ts, main = "Actual vs Seasonally Adjusted (STL, additive)", ylab = "Billions USD", xlab = "Quarter", lwd = 2)
+lines(y_sa, col = "red", lwd = 2)
+legend("topleft", c("Actual", "Seasonally Adjusted"), col = c("black","red"), lty = 1, bty = "n")
+grid()
+```
+The seasonally adjusted series is nearly identical to the actuals, so seasonal effects are small relative to the level. Seasonality does not create big swings in this time series.
+
+#Accuracy Summary
+• Show a table of all the forecast methods above with their accuracy measures.
+```{r}
+library(forecast)
+naive_forecast <- naive(y_ts, h = 4)
+ses_fit <- ses(y_ts, h = 4)
+HW_full <- HoltWinters(y_ts); fc_hw <- forecast(HW_full, h = 4)
+pick <- c("ME","RMSE","MAE","MPE","MAPE")
+
+naive_row <- as.data.frame(accuracy(naive_forecast))[1, pick, drop = FALSE]
+ses_row   <- as.data.frame(accuracy(ses_fit))[1, pick, drop = FALSE]
+hw_row    <- as.data.frame(accuracy(fc_hw))[1, pick, drop = FALSE]
+
+acc_tab <- rbind( cbind(Model = "Naive", naive_row), cbind(Model = "SES", ses_row), cbind(Model = "Holt-Winters", hw_row) )
+
+for (nm in pick) acc_tab[[nm]] <- as.numeric(acc_tab[[nm]])
+acc_tab[pick] <- lapply(acc_tab[pick], round, 3)
+acc_tab
+```
+
+• Separately define each forecast method and why it is useful. Show the best and worst forecast method for each of the accuracy measures.
+1. Naive (Random Walk): Forecast equals to the last observed value.
+Why useful: Rock-solid baseline, and is hard to beat on short horizons for unit-root/trending series.
+2. Simple Moving Average (SMA): Average of the most recent k observations.
+Why useful: Smooths short-term noise. Larger k means smoother but slower to react.
+3. Simple Exponential Smoothing (SES): Recency-weighted average with weight α on the newest value (no trend/seasonality).
+Why useful: Adapts to level shifts while keeping noise down, good behavior when pattern is level + noise.
+4. Holt-Winters (HW): Exponential smoothing with level α, trend β, and seasonality γ.
+Why useful: Handles trending and seasonal data, typically more accurate than SES/Naive on upward trends.
+
+Best vs. worst by accuracy measure:
+Lower is better for RMSE, MAE, MAPE. For ME/MPE, closer to 0 is better.
+
+ME (bias):
+Best: Holt–Winters 11.951
+Worst: Naive 37.723
+
+RMSE:
+Best: Holt-Winters 74.756
+Worst: Naive 88.504
+
+MAE:
+Best: Holt-Winters 53.810
+Worst: Naive 70.903
+
+MPE (% bias):
+Best: Holt-Winters 0.442%
+Worst: Naive. Llargest % bias in accuracy output. SES is 1.035% and Naive is higher.
+
+MAPE (% error):
+Best: Holt-Winters 1.790%
+Worst: Naive. Largest in the table. SES is 2.411% and Naive is higher.
+
+Summary: Holt-Winters is the most accurate across the board for this dataset. SES is second. Naive is the weakest. A trend-aware smoother has an edge in this data set.
+
+#Conclusion
+• Summarize your analysis of the time series values over the time period.
+  The series mostly went up. There was a short drop around 2020, then it climbed faster to new highs. The seasonal pattern by quarter is small. Most of the movement is from the long-run trend, not seasonality.
+
+• Based on your analysis and forecast above, do you think the value of the time series will increase, decrease, or stay flat over the next year? How about the next 2 years?
+  Based on the forecasts, the value is expected to increase over the next year. It is also likely to keep increasing over the next two years, although the uncertainty grows the farther out we look.
+
+• Rank forecasting methods for this time series based on historical values.
+1. Holt-Winters: best accuracy and smallest bias.
+2. Simple Exponential Smoothing (SES): good, but not as strong as Holt–Winters.
+3. Naive: weakest on this trending series; useful only as a simple benchmark.
+4. The simple moving averages are helpful for smoothing the line, but they react slowly and are not as accurate for forecasting in this case.
