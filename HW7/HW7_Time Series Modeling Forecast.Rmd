@@ -1,0 +1,96 @@
+---
+title: "HW7_Time Series Modeling Forecast"
+author: "Yufei Liu"
+date: "2025-11-20"
+output: html_document
+---
+
+## Series: Federal Reserve Z.1 — L.230 (Q), Nonfinancial corporate business; trade receivables; asset (FL103070005.Q).
+
+# I. Import Data
+# Setup
+```{r}
+library(readr)
+library(forecast)
+
+# file is in billions, quarterly, date like "YYYY Qn"
+csv_path <- "C:/Users/l2007/Desktop/文档/Business Forecasting/Week 3/HW3 data_w SCFM project data/l230_nfc_trade_receivables_2000on.csv"
+
+df <- read_csv(csv_path, show_col_types = FALSE)
+names(df) <- tolower(names(df))
+
+# parse "YYYY Qn", ts with frequency=4
+parse_yq <- function(x){
+  s <- gsub(" ", "", x)     # "YYYYQn"
+  cbind(as.integer(substr(s,1,4)),
+        as.integer(substr(s,nchar(s),nchar(s))))
+}
+yq <- parse_yq(df$date)
+y_ts <- ts(df$value, start = c(yq[1,1], yq[1,2]), frequency = 4)
+
+H <- frequency(y_ts)
+```
+
+# Plot Time Series
+```{r}
+plot(y_ts, main = "NFC Trade Receivables (Quarterly, Billions USD)",
+ylab = "Billions USD", xlab = "Quarter", lwd = 1)
+grid()
+```
+• Please summarize your observations of the time series plot
+1. The overall trend is clear upward. The level climbed fast through 2010 to 2019. There is one obvious shock around 2020. May caused by the pandemic. Then, the trend has risen the fastet since 2021.
+2. Seasonality looks weak. I don’t see a stable, repeating pattern in the plot. Comparing to the overall trend, wiggles between quarters are small relative.
+3. Current level is the highest.
+
+# ARIMA
+## Identify differencing + Explain the model output
+```{r}
+# same tools as notes
+d  <- ndiffs(y_ts)       # non-seasonal differences needed
+D  <- nsdiffs(y_ts)      # seasonal differences at lag 4
+d
+D
+
+# show ACF/PACF
+tsdisplay(y_ts, main = "Raw series")
+if (d > 0) tsdisplay(diff(y_ts, differences = d), main = paste("After d =", d))
+if (D > 0) tsdisplay(diff(y_ts, lag = 4, differences = 1), main = "After seasonal D = 1")
+
+# fit
+auto_fit <- auto.arima(y_ts, stepwise = FALSE, approximation = FALSE, seasonal = TRUE)
+auto_fit
+```
+auto.arima selected ARIMA(p,d,q)(P,D,Q)[4]. d and D come from ndiffs/nsdiffs. auto_fit reports key coefficients and AICc while lower is better among candidates.
+
+## Residual analysis
+```{r}
+# All-in-one
+checkresiduals(auto_fit)
+
+Acf(auto_fit$residuals)
+Box.test(residuals(auto_fit), lag = 20, type = "Ljung")
+plot.ts(residuals(auto_fit), main = "Residuals")
+hist(auto_fit$residuals, main = "Residuals histogram", xlab = "Residual")
+tsdiag(auto_fit)
+```
+Residuals look like white noise, and Ljung–Box p-value > 0.05 means that there is no strong leftover autocorrelation. Model is adequate.
+
+## Forecast the next five periods and plot
+```{r}
+h <- 5
+arima_forecast <- forecast(auto_fit, h = h)
+plot(arima_forecast, main = "ARIMA Forecast (Next 5 Quarters)", ylab = "Billions USD", xlab = "Quarter")
+lines(arima_forecast$fitted, col = "gray40")
+
+plot(arima_forecast, fcol = NA)
+lines(arima_forecast$mean, lwd=1, lty=3)
+
+arima_forecast
+```
+
+## Accuracy
+```{r}
+accuracy(arima_forecast)[, c("ME","RMSE","MAE","MAPE")]
+```
+RMSE and MAE are typical dollar errors in billions. MAPE is average % error, lower is better. In this time series, the ARIMA model shows low error. MAE ≈ $49.75B and MAPE ≈ 1.70%. For a macro quarterly level series, 1~2% is solid. RMSE ≈ $66.98B indicates large misses are limited. ME ≈ $8.33B is a small positive bias (slight over-forecast). Overall, the model is accurate on this scale.
+
